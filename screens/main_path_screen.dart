@@ -2,13 +2,15 @@
 import 'package:flutter/material.dart';
 import 'dart:math' as math;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../theme.dart';
+import '../providers/api_provider.dart';
+import 'task_solving_screen.dart'; // Подключаем экран доски
 
 class LevelData {
   final Color color;
   final String? text;
   final dynamic icon;
-
   const LevelData({required this.color, this.text, this.icon});
 }
 
@@ -23,261 +25,221 @@ const List<LevelData> _pathElements = [
   LevelData(color: clPrimaryDark, text: "6"),
   LevelData(color: clPrimaryMain, text: "7"),
   LevelData(color: clPrimaryDark, text: "8"),
-  LevelData(color: clPrimaryMain, text: "9"),
-  LevelData(color: clPrimaryDark, icon: FontAwesomeIcons.chessBishop),
-  LevelData(color: clPrimaryDark, text: "10"),
-  LevelData(color: clPrimaryMain, icon: FontAwesomeIcons.chessQueen),
-  LevelData(color: clPrimaryDark, text: "11"),
 ];
 
-class MainPathScreen extends StatelessWidget {
+class MainPathScreen extends ConsumerWidget {
   const MainPathScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    const double tileSize = 70.0;
-    const double verticalStep = tileSize * 2; // Оптимальный шаг для линии
-    const double amplitude = 75.0; // Размах змейки
+  Widget build(BuildContext context, WidgetRef ref) {
+    // ЗАПРАШИВАЕМ ДАННЫЕ ИЗ БАЗЫ
+    final tasksAsync = ref.watch(tasksProvider);
 
-    const double containerWidth = 400.0;
-    const double center = containerWidth / 2;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          Positioned.fill(child: CustomPaint(painter: ChessGridPainter())),
 
-    // Вычисляем общую высоту скролла
-    final double pathHeight =
-        _pathElements.length * verticalStep + (tileSize * 1.5);
+          tasksAsync.when(
+            loading: () => const Center(
+              child: CircularProgressIndicator(color: clPrimaryMain),
+            ),
+            error: (e, s) => Center(
+              child: Text(
+                "Ошибка сети. Убедитесь, что сервер запущен.\n$e",
+                textAlign: TextAlign.center,
+              ),
+            ),
+            data: (allTasks) {
+              // БЕРЕМ ТОЛЬКО УРОКИ
+              final lessons = allTasks
+                  .where((t) => t['type'] == 'lesson')
+                  .toList();
 
-    // Подготавливаем точки для отрисовки соединительной линии
-    final List<Offset> linePoints = List.generate(_pathElements.length, (
-      index,
-    ) {
-      final double bottom = index * verticalStep;
-      final double xOffset = math.sin(index * 0.8) * amplitude;
-      final double left = center - (tileSize / 2) + xOffset;
-      // Нам нужен центр каждого ромба для линии (X и Y от верхнего края)
-      return Offset(
-        left + (tileSize / 2),
-        pathHeight - bottom - (tileSize / 2),
-      );
-    });
-
-    return Stack(
-      children: [
-        // 1. СЛОЙ ФОНА (Не скроллится, дает атмосферу)
-        _buildChessBackground(context),
-
-        // 2. СЛОЙ СКРОЛЛА (Путь и Линия)
-        Positioned.fill(
-          child: SingleChildScrollView(
-            reverse: true, // Начинаем снизу
-            padding: const EdgeInsets.symmetric(vertical: 80),
-            child: Center(
-              child: SizedBox(
-                width: containerWidth,
-                height: pathHeight,
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // --- ЛИНИЯ ПУТИ (Рисуется под ромбами) ---
-                    Positioned.fill(
-                      child: CustomPaint(
-                        painter: PathLinePainter(
-                          points: linePoints,
-                          color: clBrown.withValues(alpha: 0.3),
+              return CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 40, bottom: 20),
+                      child: Center(
+                        child: Text(
+                          "Путь шахматиста",
+                          style: Theme.of(context).textTheme.displayMedium
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontSize: 36,
+                                shadows: [
+                                  const Shadow(
+                                    color: Colors.black45,
+                                    blurRadius: 10,
+                                  ),
+                                ],
+                              ),
                         ),
                       ),
                     ),
+                  ),
+                  SliverPadding(
+                    padding: const EdgeInsets.symmetric(vertical: 40),
+                    sliver: SliverList(
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final element = _pathElements[index];
+                        // Вычисляем зигзаг
+                        final double offsetX = math.sin(index * 0.8) * 100;
 
-                    // --- УЗЛЫ (Сами ромбы) ---
-                    ...List.generate(_pathElements.length, (index) {
-                      final data = _pathElements[index];
-                      final double bottom = index * verticalStep;
-                      final double xOffset = math.sin(index * 0.8) * amplitude;
-                      final double left = center - (tileSize / 2) + xOffset;
+                        // Проверяем, есть ли реальный урок в базе для этого ромба
+                        final Map<String, dynamic>? lessonData =
+                            index < lessons.length ? lessons[index] : null;
 
-                      return Positioned(
-                        bottom: bottom,
-                        left: left,
-                        child: RhombusTile(
-                          color: data.color,
-                          contentWidget: data.icon != null
-                              ? FaIcon(data.icon, color: Colors.white, size: 28)
-                              : (data.text != null
-                                    ? Text(
-                                        data.text!,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 24,
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 20),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Transform.translate(
+                                offset: Offset(offsetX, 0),
+                                // ДЕЛАЕМ РОМБ КЛИКАБЕЛЬНЫМ
+                                child: GestureDetector(
+                                  onTap: () {
+                                    if (lessonData != null) {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (c) => TaskSolvingScreen(
+                                            title: lessonData['title'],
+                                            description:
+                                                lessonData['description'],
+                                            fen: lessonData['fen'],
+                                            solution:
+                                                lessonData['solution'] ?? [],
+                                            type: 'lesson',
+                                          ),
                                         ),
-                                      )
-                                    : null),
-                        ),
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ),
+                                      );
+                                    } else {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Этот урок еще разрабатывается!",
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  child: PathNode(
+                                    color: element.color,
+                                    // Если урок есть - показываем его номер, иначе старый дизайн
+                                    text: lessonData != null
+                                        ? "${index + 1}"
+                                        : element.text,
+                                    icon: element.icon,
+                                    // Визуально выделяем ромбы, к которым привязан урок
+                                    isUnlocked: lessonData != null,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }, childCount: _pathElements.length),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
-        ),
-      ],
-    );
-  }
-
-  // Генератор уютного фона с фигурами
-  // --- ГЕНЕРАТОР УЮТНОГО ШАХМАТНОГО ФОНА ---
-  Widget _buildChessBackground(BuildContext context) {
-    return IgnorePointer(
-      child: Stack(
-        children: [
-          // 1. Рисуем сетку на весь экран
-          Positioned.fill(child: CustomPaint(painter: ChessGridPainter())),
-
-          // 2. Оставляем твои любимые полупрозрачные фигуры для объема
-          Positioned(
-            top: -50,
-            left: -50,
-            child: Opacity(
-              opacity: 0.04,
-              child: FaIcon(
-                FontAwesomeIcons.chessKnight,
-                size: 400,
-                color: clPrimaryDark,
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: 100,
-            right: -100,
-            child: Opacity(
-              opacity: 0.04,
-              child: FaIcon(
-                FontAwesomeIcons.chessQueen,
-                size: 500,
-                color: clPrimaryMain,
-              ),
-            ),
-          ),
-
-          // 3. Тонкий градиент сверху и снизу, чтобы сетка не обрывалась резко
-          Positioned.fill(child: DecoratedBox(decoration: BoxDecoration())),
         ],
       ),
     );
   }
 }
 
-// === КЛАСС ДЛЯ ОТРИСОВКИ ЛИНИИ ПУТИ ===
-class PathLinePainter extends CustomPainter {
-  final List<Offset> points;
+class PathNode extends StatelessWidget {
   final Color color;
+  final String? text;
+  final dynamic icon;
+  final bool isUnlocked;
 
-  PathLinePainter({required this.points, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (points.length < 2) return;
-
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth =
-          20.0 // Толщина линии
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-
-    final path = Path();
-    path.moveTo(points.first.dx, points.first.dy);
-
-    // Рисуем кривую Безье для плавности между точками
-    for (int i = 0; i < points.length - 1; i++) {
-      final p1 = points[i];
-      final p2 = points[i + 1];
-      // Контрольные точки для легкого изгиба
-      final controlPointX = (p1.dx + p2.dx) / 2;
-      final controlPointY = (p1.dy + p2.dy) / 2;
-
-      path.quadraticBezierTo(p1.dx, p1.dy, controlPointX, controlPointY);
-      path.lineTo(p2.dx, p2.dy);
-    }
-
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// Виджет узла (Ромб) с объемными 3D-тенями
-class RhombusTile extends StatelessWidget {
-  final Color color;
-  final Widget? contentWidget;
-
-  const RhombusTile({super.key, required this.color, this.contentWidget});
+  const PathNode({
+    super.key,
+    required this.color,
+    this.text,
+    this.icon,
+    this.isUnlocked = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Уровень выбран!"),
-            duration: Duration(milliseconds: 500),
-          ),
-        );
-      },
-      child: Transform.rotate(
+    Widget contentWidget;
+    if (icon != null) {
+      contentWidget = Transform.rotate(
         angle: math.pi / 4,
-        child: Container(
-          width: 70,
-          height: 70,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: const [
-              BoxShadow(
-                color: Colors.black26,
-                blurRadius: 10,
-                offset: Offset(4, 4),
-              ),
-              BoxShadow(
-                color: Colors.white54,
-                blurRadius: 10,
-                offset: Offset(-2, -2),
-              ),
-            ],
-          ),
-          child: Transform.rotate(
-            angle: -math.pi / 4,
-            child: Center(child: contentWidget),
+        child: FaIcon(icon, color: Colors.white, size: 28),
+      );
+    } else {
+      contentWidget = Transform.rotate(
+        angle: math.pi / 4,
+        child: Text(
+          text ?? "",
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
           ),
         ),
+      );
+    }
+
+    return Transform.rotate(
+      angle: math.pi / 4,
+      child: Container(
+        width: 80,
+        height: 80,
+        decoration: BoxDecoration(
+          // Если урок привязан - он яркий, если нет - тусклый (закрыт)
+          color: isUnlocked ? color : color.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [
+            BoxShadow(
+              color: Colors.black26,
+              blurRadius: 10,
+              offset: Offset(4, 4),
+            ),
+            BoxShadow(
+              color: Colors.white54,
+              blurRadius: 10,
+              offset: Offset(-2, -2),
+            ),
+          ],
+        ),
+        child: Center(child: contentWidget),
       ),
     );
   }
 }
 
-// === КЛАСС ДЛЯ ОТРИСОВКИ ШАХМАТНОЙ СЕТКИ НА ФОНЕ ===
 class ChessGridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // Цвета: очень светлый нейтральный и чуть более зеленый "пастельный"
     final paintLight = Paint()..color = const Color.fromARGB(255, 0, 66, 46);
     final paintGreen = Paint()..color = const Color.fromARGB(255, 4, 36, 0);
-
-    const double squareSize = 100.0; // Размер клетки фона
-
-    // Проходимся циклом по всей ширине и высоте экрана
+    const double squareSize = 100.0;
     for (double i = 0; i < size.width; i += squareSize) {
       for (double j = 0; j < size.height; j += squareSize) {
-        // Логика шахматного порядка
-        final isEven =
-            ((i / squareSize).floor() + (j / squareSize).floor()) % 2 == 0;
-
-        canvas.drawRect(
-          Rect.fromLTWH(i, j, squareSize, squareSize),
-          isEven ? paintLight : paintGreen,
-        );
+        if (((i / squareSize) + (j / squareSize)) % 2 == 0) {
+          canvas.drawRect(
+            Rect.fromLTWH(i, j, squareSize, squareSize),
+            paintLight,
+          );
+        } else {
+          canvas.drawRect(
+            Rect.fromLTWH(i, j, squareSize, squareSize),
+            paintGreen,
+          );
+        }
       }
     }
   }
